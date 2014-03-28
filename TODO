@@ -1,0 +1,49 @@
+* The database handling in auth.py is not thread-safe.  Use SQLAlchemy
+
+* Make 406 return JSON
+** See if other errors can return JSON.  MAybe we go back to handle_all_404s?
+
+* Correctly return 500 for errors we weren't expecting, 400 for those we
+  were (e.g. SyntaxError).  Maybe subclass BadRequest for our exceptions
+
+* Fix the hacky MIME-type stuff and possibly prefer html for browsers.
+
+* Double-check all edge cases for User authentication.  We want to
+  support an "anonymous" permission set, but should an authenticated but
+  expired user be allowed in?  Should we give up on expiration and just
+  have a boolean flag of tokens being "active" or not?  Or are tokens
+  not active simply by deleting them, although then our API consumers
+  cannot differentiate between no tokens and bad/expired tokens.  Users
+  want that, Security folks don't.
+
+* Ampersands et all need to be escaped in HTML-ified things, proably
+  using sax.utils.xmlescape
+
+* Check what header XmlHttpRequest() sends by default.  Is it the
+  browser's, or something saner?
+
+* A better way of representing permissions.  Right now you can assign
+  'WRITE' without 'READ' which makes no sense.  Consider a hierarchy.
+
+* Better logged-in user management, differentiating between expired,
+  invalid token, no token, etc.  Consider punting expiration entirely.
+
+* Does LabelArticles need to check the articles returned?  We do expose
+  the title, but nothing else.  Can we leave it as "require valid-user"
+  if we stop exposing title?
+
+* ArticleLabels.put() is hacky, in that it fakes a 405 if not invoked
+  correctly. It should probably move to its own Resource.
+
+* Do we want to allow multiple names (multiple labels at once) in
+  ArticleLabels.post()?  If so, what do we do if some labels fail to
+  apply?  Return a list of those that did?
+
+* Ensure kb-rpc or whatever has the correct permissions such that we can
+  assume a RemoteException when calling getPage() or variants is always
+  a 404, not a 403.   The Confluence JSON-RPC API (a plugin for 3.5) has
+  support for testing for article existence.
+
+* Investigate JSONP support
+
+* Rate-limiting

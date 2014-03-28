@@ -1,0 +1,21 @@
+Version 1 of the Knowledge Base API
+
+Requirements:
+- Embeddable content
+- Basic handling of labels
+- Must not give users access to content they shouldn't have
+
+Options for Authz:
+a) API keys have a mapping of operations they are allowed to do
+   and spaces they are allowed to touch.  
+b) API keys are simply a proxy for actual confluence accounts, 
+   and the confluence accounts are assigned the permissions they need.
+
+(a) limits what we can do and may not scale.  However, it does allow us to
+    definitively distinguish between 404 and 403 for resources
+(b) requires more manual setup and also may not scale, but is probably
+    more correct.
+
+Open-ended questions:
+- How many users do we expect?
+- Anonymous access?  Anonymous MIT-only access?
