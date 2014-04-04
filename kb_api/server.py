@@ -6,10 +6,12 @@ import sys
 from flask.ext.restful import Api, Resource, reqparse, abort, fields, marshal
 from werkzeug.exceptions import (HTTPException, Gone, InternalServerError,
                                  NotImplemented, NotFound, MethodNotAllowed,
-                                 Forbidden, Unauthorized)
+                                 Forbidden, Unauthorized, NotAcceptable,
+                                 BadRequest)
 
 from confluence.shortcode import code2id
 from confluence.rpc import Session, RemoteException
+from xml.sax import saxutils
 
 from .config import APIConfig
 from . import auth
@@ -20,6 +22,13 @@ confluence_session = Session(config.get('Connection', 'host'))
 confluence_session.login(config.get('Connection', 'username'),
                          config.get('Connection', 'password'))
 authcontext = auth.AuthenticationContext()
+
+def html_escape(thing):
+    if isinstance(thing, dict):
+        return {k: html_escape(v) for k,v in thing.items()}
+    if isinstance(thing, str):
+        return saxutils.escape(thing)
+    return thing
 
 def require_access(user, op=None, space=None):
     with authcontext as ctx:
@@ -82,8 +91,8 @@ class ParsedException:
         self.error_type = e.__class__.__name__
         logger.debug('Parsing exception of type %s: %s', self.error_type,
                      e)
-        self.code = 400
-        self.description = None
+        self.code = 500
+        self.description = "Unexpected exception, please report this bug."
         if isinstance(e, HTTPException):
             logger.debug('Exception is HTTPException or subclass')
             # This is wrapped here in case there's some other Exception
@@ -104,9 +113,15 @@ class ParsedException:
     
     @property
     def html(self):
-        return self._html_template.format(**self.__dict__)
+        return self._html_template.format(**html_escape(self.__dict__))
 
-class SyntaxError(Exception):
+class APISyntaxError(BadRequest):
+    """An API syntax error
+
+    This is a subclass of BadRequest, because we want to differentiate
+    between HTTP errors (which we raise) and other Exceptions (which
+    we're not expecting, and thus should be 500 errors
+    """
     pass
 
 class KBAPI(Api):
@@ -138,14 +153,10 @@ class KBAPI(Api):
         logger.debug("Returning data: %s", repr(data)[:80])
         rv = super(KBAPI, self).make_response(data, *args, **kwargs)
         if rv is None:
-            rv = self.not_acceptable()
+            logger.debug("make_response returned None")
+            rv = flask.make_response(NotAcceptable(), 406)
         rv.headers.extend(cors_headers())
         return rv
-
-    def not_acceptable(self, reason=None):
-        if reason is None:
-            reason = "Cannot generate content for any media type in 'Accept' header"
-        return flask.make_response(reason, 406)
 
     def handle_error(self, e):
         parsed = ParsedException(e)
@@ -158,7 +169,8 @@ class KBAPI(Api):
             resp = flask.make_response(data['html'], code)
             resp.headers.extend(headers or {})
             return resp
-        return self.not_acceptable()
+        logger.debug("html() was asked to format something without html")
+        raise NotAcceptable()
 
     def json(self, data, code, headers=None):
         if not isinstance(data, dict):
@@ -200,7 +212,7 @@ class Base(KBResource):
 </html>"""
         return {'text': txt,
                 'documentation': docs,
-                'html': html.format(title=txt, uri=docs)}
+                'html': html.format(title=html_escape(txt), uri=docs)}
 
 class Shortcode(KBResource):
     """Convert a shortcode to a page id."""
@@ -212,7 +224,6 @@ class Shortcode(KBResource):
         return rv
      
 class LabelArticles(AuthenticatedResource):
-    # Does this need to be authenticated?
     def get(self, **kwargs):
         user = kwargs.get('_api_user')
         require_access(user)
@@ -272,7 +283,7 @@ class ArticleLabels(AuthenticatedResource):
         if name is None:
             # I don't like flask-restful's handling of required arguments,
             # and it doesn't play nice with the custom error handler anyway
-            raise SyntaxError("'name' is required in POST data")
+            raise APISyntaxError("'name' is required in POST data")
         return self._validate_and_add_label(name=name, **kwargs)
 
     def _validate_and_add_label(self, **kwargs):
@@ -319,9 +330,9 @@ class Article(AuthenticatedResource):
         fmt = kwargs.get('format', 'object')
         part = kwargs.get('part', 'all')
         if fmt not in self._valid_formats:
-            raise SyntaxError("Unknown format: {0}".format(fmt))
+            raise APISyntaxError("Unknown format: {0}".format(fmt))
         if part not in self._valid_parts:
-            raise SyntaxError("Unknown part: {0}".format(part))
+            raise APISyntaxError("Unknown part: {0}".format(part))
         try:
             page = confluence_session.getPageById(kwargs.get('id'))
         except RemoteException:
