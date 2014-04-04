@@ -12,20 +12,23 @@ from confluence.shortcode import code2id
 from confluence.rpc import Session, RemoteException
 
 from .config import APIConfig
-from .auth import AuthenticationContext, Permissions, Token
+from . import auth
 
 logger = logging.getLogger('kb_api.server')
 config = APIConfig()
 confluence_session = Session(config.get('Connection', 'host'))
 confluence_session.login(config.get('Connection', 'username'),
                          config.get('Connection', 'password'))
+authcontext = auth.AuthenticationContext()
 
-def require_access(user, op, space):
-    if not user.can(op, space):
+def require_access(user, op=None, space=None):
+    with authcontext as ctx:
+        if op is None and space is None:
+            return user.authenticated
+        if user.can(op, space):
+            return True
         if user.authenticated:
             raise Forbidden(config.get('Text', 'forbidden'))
-        elif user.expired:
-            raise Unauthorized(config.get('Text', 'token_expired'))
         else:
             raise Unauthorized(config.get('Text', 'not_logged_in'))
 
@@ -47,17 +50,17 @@ def cors_headers():
 def get_authentication(f):
     def auth_decorator(*args, **kwargs):
         auth_header = flask.request.headers.get('Authorization', '')
-        token = Token.extract(auth_header)
+        token = auth.Token.extract(auth_header)
         logger.debug('Token retrieved: %s', token)
-        auth_ctx = AuthenticationContext(config.get('Authentication',
-                                                    'dbname'))
-        kwargs['_api_user'] = auth_ctx.get_user(token)
-        logger.info("User: %s", kwargs['_api_user'])
+        with authcontext as ctx:
+            api_user = ctx.lookup_user(token)
+            if api_user is None:
+                logger.debug("User passed invalid token")
+                raise Unauthorized(config.get('Text', 'not_logged_in'))
+            kwargs['_api_user'] = api_user
+            logger.info("User: %s", kwargs['_api_user'])
         # Special case this here.  Supplying an invalid token,
         # even for anonymous methods, is not supported.
-        if token is not None and kwargs['_api_user'].anonymous:
-            logger.debug("User passed invalid token")
-            raise Unauthorized(config.get('Text', 'not_logged_in'))
         return f(*args, **kwargs)
     return auth_decorator
 
@@ -169,7 +172,7 @@ class KBResource(Resource):
     def dispatch_request(self, *args, **kwargs):
         logger.info("%s.%s(%s)", self.__class__.__name__,
                     flask.request.method.lower(), kwargs)
-        super(KBResource, self).dispatch_request(*args, **kwargs)
+        return super(KBResource, self).dispatch_request(*args, **kwargs)
 
     # This is essentially a no-op, but is required for the CORS support
     # decorator.  Otherwise, flask would return a 405 before the wrapper
@@ -212,8 +215,7 @@ class LabelArticles(AuthenticatedResource):
     # Does this need to be authenticated?
     def get(self, **kwargs):
         user = kwargs.get('_api_user')
-        if not user.authenticated:
-            raise Unauthorized(config.get('Text', 'not_logged_in'))
+        require_access(user)
         if 'id' in kwargs:
             articles = confluence_session.getLabelContentById(kwargs.get('id'))
         else:
@@ -231,8 +233,7 @@ class Labels(AuthenticatedResource):
 
     def get(self, **kwargs):
         user = kwargs.get('_api_user')
-        if not user.authenticated:
-            raise Unauthorized(config.get('Text', 'not_logged_in'))
+        require_access(user)
         label_name = kwargs.get('name')
         labels = confluence_session.getLabelsByDetail(label_name=label_name)
         if len(labels) == 0:
@@ -248,7 +249,7 @@ class ArticleLabels(AuthenticatedResource):
     def get(self, **kwargs):
         user = kwargs.get('_api_user')
         page = confluence_session.getPageById(kwargs.get('id'))
-        require_access(user, Permissions.READ, page.space)
+        require_access(user, auth.Permissions.READ, page.space)
         labels = confluence_session.getLabelsById(page.id)
         if 'name' in kwargs:
             labels = [x for x in labels if x.name == kwargs.get('name')]
@@ -282,7 +283,7 @@ class ArticleLabels(AuthenticatedResource):
             page = confluence_session.getPageById(id)
         except RemoteException:
             raise NotFound("Unable to retrieve a page with id: {0}".format(id))
-        require_access(user, Permissions.WRITE, page.space)
+        require_access(user, auth.Permissions.WRITE, page.space)
         if not confluence_session.addLabelByName(name, id):
             raise InternalServerError('Failed to add label.  No more info available.')
         rv = {'data': 'Label added',
@@ -325,7 +326,8 @@ class Article(AuthenticatedResource):
             page = confluence_session.getPageById(kwargs.get('id'))
         except RemoteException:
             raise NotFound('Page not found')
-        require_access(user, Permissions.READ, page.space)
+        require_access(user, auth.Permissions.READ, page.space)
+        logger.debug("Access checked")
         page.short_url = confluence_session.make_short_url(page.shortcode)
         if not page.current:
             raise Gone(config.get('Text', 'deleted_article',

@@ -1,24 +1,32 @@
 import logging
-import os.path
 import re
-import sqlite3
 import uuid
 
-from datetime import datetime, timedelta
+import sqlalchemy as sql
+from sqlalchemy.ext import declarative
+
+from .config import APIConfig
+from datetime import datetime
 
 logger = logging.getLogger('kb_api.auth')
+config = APIConfig()
+# the Base class for the ORM
+Base = declarative.declarative_base()
+dbname = config.get('Authentication', 'dbname')
+engine = sql.create_engine('sqlite:///{0}'.format(dbname),
+                           poolclass=sql.pool.StaticPool)
+session = sql.orm.sessionmaker(bind=engine)()
 
-schema = { 'users': [( 'id', 'integer primary key autoincrement'),
-                     ('email', 'varchar'),
-                     ('description', 'varchar'),
-                     ('expires', 'timestamp'),
-                     ('created', 'timestamp'),
-                     ('api_key', 'varchar(36)')],
+logger.debug('Using db: {0}'.format(dbname))
 
-           'permissions': [('id', 'integer'),
-                           ('space', 'varchar'),
-                           ('permissions', 'integer')]
-           }
+@sql.event.listens_for(sql.engine.Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+class AuthenticationError(Exception):
+    pass
 
 class Token:
     _re = re.compile(r'bearer ([\w\-]+)$')
@@ -34,192 +42,190 @@ class Token:
         return rv
 
 class Permissions:
-    NONE = 0
-    READ = 1
-    WRITE = 2
+    """
+    An enum of permissions
+    """
+    NONE = 0x00
+    READ = 0x01
+    WRITE = 0x02
+    WRITELABELS = 0x04
 
-    ANONYMOUS_SPACES = ('istcontrib',)
+class Permission(Base):
+    """The representation of a single permission in the DB"""
+    __tablename__ = "permissions"
+    
+    uid = sql.Column(sql.Integer, sql.ForeignKey("users.id"))
+    space_key = sql.Column(sql.String(64))
+    permissions = sql.Column(sql.Integer)
 
-    def __init__(self, *permissions):
-        logger.debug("Initializing new Permissions object with: %s",
-                     permissions)
-        if len(permissions) == 0:
-            for s in self.ANONYMOUS_SPACES:
-                self[s] = Permissions.READ
-        for k,v in permissions:
-            if k in self.__dict__:
-                logger.error("Duplicate Permissions value for %s", k)
-                raise ValueError('Permission set has duplicate entries!')
-            self[k] = v
+    __table_args__ = (sql.PrimaryKeyConstraint(uid, space_key),)
 
-    def __setitem__(self, key, value):
-        if not isinstance(value, int):
-            raise ValueError("Mode bits must be integers")
-        logger.debug("Setting %s to %d", key, value)
-        self.__dict__[key] = value
+class Status(Base):
+    """Lookup table for statuses"""
+    __tablename__ = 'status'
+
+    id = sql.Column(sql.Integer, sql.Sequence('status_id_seq'), primary_key=True)
+    value = sql.Column(sql.String(32), unique=True)
+
+class AnonymousUser:
+    """The Anonymous User."""
+    permissions = {'istcontrib': Permissions.READ,
+                   }
+
+    @staticmethod
+    def can(op, space):
+        return space in AnonymousUser.permissions and \
+            (AnonymousUser.permissions[space] & op) != 0
+    
+class User(Base):
+    """Representation of a 'user' in the database"""
+    __tablename__ = 'users'
+
+    id = sql.Column(sql.Integer, sql.Sequence('user_id_seq'), primary_key=True)
+    email = sql.Column(sql.String(50))
+    description = sql.Column(sql.String(128))
+    created = sql.Column(sql.DateTime())
+    status = sql.Column(sql.Integer, sql.ForeignKey("status.id"))
+    key = sql.Column(sql.String(36), unique=True)
+
+    permissions = sql.orm.relationship("Permission", backref="user")
 
     def __repr__(self):
-        return "{0}({1})".format(self.__class__.__name__,
-                                      ', '.join(
-                ["{0}={1}".format(*x) for x in self.__dict__.items()]))
+        return "User({0}, {1}, {2})".format(self.email,
+                                            Statuses.readable(self.status),
+                                            self.key)
 
-    def items(self):
-        return self.__dict__.items()
+    def _get_permission(self, space):
+        perms = [x for x in self.permissions if x.space_key == space]
+        if len(perms) > 1:
+            raise AuthenticationError(
+                "DB error: user %d has multiple perms %s".format(self.id, space)
+                )
+        return perms[0] if len(perms) else None
 
-    def __len__(self):
-        return len(self.__dict__)
+    def can(self, op, space):
+        perm = self._get_permission(space)
+        return False if perm is None else (op & perm.permissions != 0)
 
-    def __iter__(self):
-        return self.__dict__.iteritems()
+    def set_permission(self, space, *mode):
+        perms = reduce(lambda x, y: x | y, mode)
+        perm = self._get_permission(space)
+        if perm is None:
+            self.permissions.append(Permission(space_key=space, permissions=perms))
+        else:
+            perm.permissions = perms
 
-    def __contains__(self, item):
-        return item in self.__dict__
+class _Statuses:
+    """Hack for treating this like a dynamic ENUM"""
+    _all = ('ACTIVE', 'REVOKED', 'EXPIRED', 'RESERVED')
 
-    def __getitem__(self, key):
-        logger.debug("Returning NONE for %s", key)
-        return self.__dict__.get(key, Permissions.NONE)
+    def __init__(self, *statuses):
+        self._statuses = statuses
+        self._status_dict = {s.value: s.id for s in self._statuses}
 
     def __getattr__(self, attr):
-        if not attr.startswith('_'):
-            return self[attr]
-        raise AttributeError("Permissions instance has no attribute '{0}'".format(attr))
+        # There's probably a better way
+        if len(self._statuses) == 0:
+            raise AuthenticationError("Cannot use Statuses outside AuthenticationContext")
+        return self._status_dict[attr]
 
-class AuthenticationError(Exception):
-    pass
+    def readable(self, status):
+        if status not in self._status_dict.values():
+            raise AttributeError("No Status id {0}".format(status))
+        return [k for k,v in self._status_dict.items() if v == status][0]
+
+    @property
+    def all(self):
+        return [Status(value=x) for x in self._all]
+    
+
+Statuses = _Statuses()
 
 class APIUser:
-    def __init__(self, context, uid, expiration=None):
-        self.uid = uid
-        self.expires = expiration
-        if expiration is not None and not isinstance(expiration, datetime):
-            raise ValueError('expiration must be a datetime.datetime')
-        self.permissions = context._get_permissions(uid)
+    def __init__(self, user=None):
+        self.user = user
 
     def __repr__(self):
-        return "{0}({1}, {2}, {3})".format(self.__class__.__name__,
-                                           self.uid, self.expires, self.permissions)
+        return "{0}({1})".format(self.__class__.__name__, self.user)
 
     def can(self, op, space):
         logger.debug("Checking for %d on %s", op, space)
-        return (getattr(self.permissions, space) & op) != 0
+        if self.user is None:
+            rv = AnonymousUser.can(op, space)
+        elif not self.authenticated:
+            rv = False
+        else:
+            rv = self.user.can(op, space)
+        logger.debug("Returning %s", rv)
+        return rv
     
     @property
     def anonymous(self):
-        return self.uid is None
+        return self.user is None
 
-    @property
-    def expired(self):
-        # An anonymous login never "expires"
-        if self.expires is None:
-            return False
-        return self.expires <= datetime.now()
-        
     @property
     def authenticated(self):
-        return not self.anonymous and not self.expired
+        return self.user is not None and self.user.status == Statuses.ACTIVE
 
 class AuthenticationContext:
-    def __init__(self, dbname):
-        if not os.path.isfile(dbname):
-            raise AuthenticationError(
-                'Database {0} does not exist.'.format(dbname))
-        self.conn = sqlite3.connect(dbname,
-                                    detect_types=sqlite3.PARSE_DECLTYPES)
-        self._ensure_schema()
+    def __init__(self):
         logger.debug("AuthenticationContext initialized")
-    
-    def _ensure_schema(self):
-        # TODO: verify columns
-        with self.conn:
-            c = self.conn.cursor()
-            for table in schema.keys():
-                c.execute(
-                    "SELECT name FROM sqlite_master WHERE name=? AND type=?",
-                    (table, 'table'))
-                if c.fetchone() is None:
-                    raise AuthenticationError('Database corrupt.')
+        Base.metadata.create_all(engine)
+        
+    def __enter__(self):
+        logger.debug("AuthenticationContext enter")
+        global Statuses
+        Statuses = _Statuses(*session.query(Status).all())
+        return self
+
+    def __exit__(self, exception_type, exception_val, trace):
+        logger.debug("AuthenticationContext exit")
+        global Statuses
+        Statuses = _Statuses()
+        if exception_type is None:
+            session.commit()
+            return True
+        return False
 
     def get_user(self, api_key):
-        # TODO: use 'Row' type?
         if api_key is None:
-            logger.debug("api_key=None, returning empty user")
-            return APIUser(self, None)
-        if not isinstance(api_key, str):
-            raise ValueError("api_key was not a string")
-        sql = 'SELECT id, expires FROM users WHERE api_key=?'
-        vals = (api_key,)
-        with self.conn:
-            logger.debug("Looking up api key %s", api_key)
-            c = self.conn.cursor()
-            c.execute(sql, vals)
-            r = c.fetchone()
-            if r is None:
-                logger.debug("Not found")
-                return APIUser(self, None)
-            return APIUser(self, *r)
+            raise ValueError("api_key cannot be None")
+        try:
+            return session.query(User).filter(User.key == api_key).one()
+        except sql.orm.exc.NoResultFound:
+            return None
+        except sql.orm.exc.NoResultFound:
+            raise AuthenticationError("The DB is corrupt")
+            logger.exception("Multiple db results for API key '%s'; shouldn't happen",
+                             api_key)
 
-    def _get_permissions(self, user_id):
-        if user_id is None:
-            logger.debug("Returning empty permissions object")
-            return Permissions()
-        sql = 'SELECT space, permissions FROM permissions WHERE id=?'
-        vals = (user_id,)
-        with self.conn:
-            # TODO: consolidate query code
-            c = self.conn.cursor() 
-            c.execute(sql, vals)
-            r = c.fetchall()
-            logger.debug("Permissions for %d: %s", user_id, r)
-            return Permissions(*r)
+    def lookup_user(self, api_key):
+        logger.debug("Looking up %s", api_key)
+        if api_key is None:
+            return APIUser()
+        user = self.get_user(api_key)
+        return None if user is None else APIUser(user)
+    
+    def add_user(self, email, **kwargs):
+        vals = { 'description': '',
+                 'status': Statuses.ACTIVE,
+                 'key': str(uuid.uuid4()),
+                 'email': email,
+                 'created': datetime.now(),
+                }
+        vals.update(kwargs)
+        user = User(**vals)
+        logger.debug("Adding user: %s", user)
+        session.add(user)
+        for space in AnonymousUser.permissions:
+            user.set_permission(space, AnonymousUser.permissions[space])
+        return user
 
-    def add_user(self, email, n_days_lifetime=365, description=''):
-        logger.debug("Adding new user %s (%d days)", email, n_days_lifetime)
-        sql = "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)"
-        now = datetime.now()
-        then = now + timedelta(days=n_days_lifetime)
-        api_key = str(uuid.uuid4())
-        vals = (None, email, description, then, now, api_key)
-        with self.conn:
-            c = self.conn.cursor()
-            c.execute(sql, vals)
-        return api_key
-
-    def _del_permissions(self, uid):
-        sql = "DELETE FROM permissions WHERE id=?"
-        with self.conn:
-            logger.debug("Deleting permissions for uid %d", uid)
-            c = self.conn.cursor()
-            c.execute(sql, (uid,))
-
-    def _add_permissions(self, uid, *args):
-        if len(args) < 1:
-            raise ValueError("Must pass at least one set of permissions")
-        if not all([isinstance(x, tuple) for x in args]):
-            raise TypeError("Must pass tuples of (space, permission)")
-        sql = "INSERT INTO permissions VALUES (?, ?, ?)"
-        with self.conn:
-            logger.debug("Adding permissions for uid %d: %s", uid, args)
-            c = self.conn.cursor()
-            c.executemany(sql, [(uid,) + perm for perm in args])
-
-    def set_permissions(self, uid, permissions):
-        self._del_permissions(uid)
-        self._add_permissions(uid, *permissions.items())
-
-    @staticmethod
-    def _create_schema(dbname):
-        # TODO: This will fail once we hit 2^63-1 users, deal with SQLite Full
-        #       exception at some point
-        # TODO: sanity check filename
-        db_conn = sqlite3.connect(dbname)
-        with db_conn:
-            for table in schema.keys():
-                cols = ', '.join([' '.join(col) for col in schema[table]])
-                # String substitution is fine here since these are static
-                # values not provided by the user.
-                db_conn.execute("DROP TABLE IF EXISTS {table}".format(
-                        table=table))
-                db_conn.execute("CREATE TABLE {table} ({columns})".format(
-                        table=table, columns=cols))
-
-
+    def create_tables(self):
+        logger.info("Dropping tables")
+        Base.metadata.drop_all(engine)
+        logger.info("Creating tables")
+        Base.metadata.create_all(engine)
+        logger.info("Populating 'status' table")
+        for status in Statuses.all:
+            session.add(status)
