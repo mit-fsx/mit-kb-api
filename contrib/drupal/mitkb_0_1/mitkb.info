@@ -1,0 +1,6 @@
+name = MIT KB
+description = Replaces shortcodes [mit-kb articleid] and [mit-kb-excerpt articleid] with content from an MIT Knowledge Base article.
+package = "MIT Modules"
+dependencies[] = filter
+core = 7.x
+version = 0.1
