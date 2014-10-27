@@ -1,0 +1,25 @@
+To install on RHEL 7:
+
+- Install httpd, mod_wsgi, and python-flask from yum.
+- Install the API itself.
+  python setup.py install_lib -d /var/www/kb_api/lib
+- Install python27-python-sqlalchemy.  This is a software collection and
+  scl doesn't play nice with Apache, so make a symlink
+  /var/www/kb_api/lib/sqlalchemy ->
+- /opt/rh/python27/root/usr/lib64/python2.7/site-packages/sqlalchemy
+- Add the SELinux context settings to file_contexts.local and run
+  restorecon -R /var/www/kb_api
+  - In particular, logs needs httpd_log_t, lib/kb_api needs
+    httpd_sys_content_rw_t to create the .pyc files, and conf/setup
+    needs the same for dealing with the setup key.
+- Double-check the firewall settings
+  # firewall-cmd --add-service=https
+  # firewall-cmd --add-service=http
+
+- Install pip and use it to install html5lib, flask-restful, Flask-SQLAlchemy
+
+- install MySQL-python, and mysql55-mysql-server
+- scl enable mysql55 "mysql [...]"
+- Create the database 'kbapi'
+- create user 'kbapi'@'localhost' identified by '[redacted]'
+- grant all privileges on kbapi.* to 'kbapi'@'localhost'
