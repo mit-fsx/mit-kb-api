@@ -132,7 +132,7 @@ def setup(formdata={}, **kwargs):
         with open(filename, 'r') as f:
             key = f.read().strip()
         if key == formdata['setup_key']:
-            auth.AuthenticationContext.create_tables()
+            auth.create_tables()
             auth.add_user(username=remote_user.username,
                           email=remote_user.email,
                           real_name=remote_user.real_name,
