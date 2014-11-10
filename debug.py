@@ -8,7 +8,7 @@ import socket
 from OpenSSL import SSL
 from werkzeug.serving import run_simple
 logging.basicConfig(level=logging.DEBUG)
-from kb_api.server import application
+from kb_api import application
 
 def verify_cb(conn, x509, err, depth, ret):
     # Called with the SSL.Connection, the X509 blob, err (errno from openssl),

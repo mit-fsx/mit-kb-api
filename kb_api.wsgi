@@ -1,1 +1,1 @@
-from kb_api.server import application
+from kb_api import application
