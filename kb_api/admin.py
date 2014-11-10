@@ -121,8 +121,7 @@ def manage_users(remote_user=None, formdata={}, **kwargs):
             user = auth.lookup_user(username)
             if user is not None:
                 admin = formdata.get('admin-{0}'.format(user.id), 'no') == 'yes'
-                user.is_admin = admin
-        db.session.commit()
+                auth.update_db_object(user, {'is_admin': admin})
     users = auth.get_all_users()
     return flask.render_template('users.html',
                                  remote_user=remote_user,
@@ -135,7 +134,7 @@ def add_admin_user(remote_user=None, formdata={}, **kwargs):
     # TODO: move this to auth.something; check if we removed our own access
     user = auth.lookup_user(formdata['username'])
     if user is not None:
-        auth.update_db_object(user, ('is_admin',), {'is_admin': True})
+        auth.update_db_object(user, {'is_admin': True})
     else:
         auth.add_user(username=formdata['username'],
                       email=formdata['email'],
@@ -178,7 +177,6 @@ def approve_key(remote_user=None, formdata={}, **kwargs):
     if key.status != auth.Statuses.PENDING:
         raise BadRequest('Key not pending.')
     auth.update_db_object(key,
-                          ('status',),
                           {'status': auth.Statuses.ACTIVE})
     return flask.redirect(flask.url_for('admin_root'))
 
@@ -206,8 +204,8 @@ def admin_edit_key(remote_user=None, formdata={}, **kwargs):
             if update_vals['owner'] is None:
                 raise ValidationError('owner', 'owner is missing')
             auth.update_db_object(key,
-                                  ('description', 'email', 'owner', 'status'),
-                                  update_vals)
+                                  update_vals,
+                                  fields=('description', 'email', 'owner', 'status'))
             for space_key in formdata.getlist('permissions', type=strip_string):
                 perms = map(lambda x: getattr(auth.Permissions, x), formdata.getlist('permissions.{0}'.format(space_key)))
                 key.set_permission(space_key, *perms)
@@ -248,9 +246,9 @@ def edit_key(remote_user=None, formdata={}, **kwargs):
         else:
             update_vals['status'] = key.status
         auth.update_db_object(key,
-                              ('description', 'email', 'status'),
-                              update_vals)
         return flask.redirect(flask.url_for('user_root'))
+                              update_vals,
+                              fields=('description', 'email', 'status'))
     return flask.render_template('edit_key.html', **tmplargs);
 
 

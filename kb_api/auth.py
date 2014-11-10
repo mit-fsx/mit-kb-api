@@ -251,19 +251,23 @@ def create_tables():
         db.session.add(status)
     db.session.commit()
 
-def update_db_object(obj, fields, values):
+def update_db_object(obj, value_map, fields=None):
     """Update an object in the database, but only if its attributes have changed.
 
     While SQLAlchemy keeps track of dirty attributes, it does not
     track changes.  e.g. if Thing.foo is 'bar' and you set
     Thing.foo='bar', it will get marked as dirty and committed, thus
     triggering a modtime change.
+
+    Except this is not true with flask.sqlalchemy, apprently
     """
-    changed=False
+    changed=True
+    if fields is None:
+        fields = value_map.keys()
     for key in fields:
-        if getattr(obj, key) != values[key]:
+        if getattr(obj, key) != value_map[key]:
             changed=True
-            setattr(obj, key, values[key])
+            setattr(obj, key, value_map[key])
     if changed:
         db.session.commit()
 

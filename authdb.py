@@ -80,7 +80,7 @@ with admin.app.test_request_context():
             user = auth.lookup_user(uname)
             if user is not None:
                 if options.yes or ask("User exists.  Make them admin?", default='y'):
-                    auth.update_db_object(user, ('is_admin',), {'is_admin': True})
+                    auth.update_db_object(user, {'is_admin': True})
                     print "User updated."
             elif options.yes or ask("Add {0} ({1}) as administrator?".format(realname, uname), default='y'):
                 auth.add_user(username=uname,
