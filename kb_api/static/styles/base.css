@@ -22,7 +22,7 @@ body {
 }
 
 .branding-header {
-    background: #d3d3d3 url("/images/background-top.jpg") repeat-x 0 -4px;
+    background: #d3d3d3 url("/static/images/background-top.jpg") repeat-x 0 -4px;
     padding: 15px 10px 5px;
 }
 
@@ -37,7 +37,7 @@ body {
 
 /* Using divs as images for hover logos */
 #mit-logo {
-    background-image: url("/images/mit-ist-web-large-off-01.png");
+    background-image: url("/static/images/mit-ist-web-large-off-01.png");
     background-position: 0px 0px;
     background-repeat: no-repeat;
     float: left;
@@ -48,11 +48,11 @@ body {
 }
 
 #mit-logo:hover {
-    background-image: url("/images/mit-ist-web-large-on-01.png");
+    background-image: url("/static/images/mit-ist-web-large-on-01.png");
 }
 
 #ist-logo {
-    background-image: url('/images/ist-web-large-off-01.png');
+    background-image: url('/static/images/ist-web-large-off-01.png');
     background-position: 0px -8px;
     background-repeat: no-repeat;
     float: left;
@@ -61,7 +61,7 @@ body {
 }
 
 #ist-logo:hover {
-    background-image: url('/images/ist-web-large-on-01.png');
+    background-image: url('/static/images/ist-web-large-on-01.png');
 }
 
 #logo-divider {
