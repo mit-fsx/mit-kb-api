@@ -1,16 +1,14 @@
-{% set title = 'Manage API Keys' %}
+{% set title = 'Manage Your Keys' %}
 {% import "form_helper.html" as forms with context %}
 {% include "_html_header.html" %}
 <body>
 {% include "_page_top.html" %}
 
-<div id="generate-key">
-<h1>{{ title }}</h1>
-<form class="clearfix" action="{{ url_for('admin_root') }}" method="POST">
+
+<div id="request-key">
+<h1>Request a key</h1>
+<form class="clearfix" action="{{ url_for('admin.user_root') }}" method="POST">
   <ul class="inline">
-    <li>
-      {{ forms.textfield('owner', label='Owner:', desc="(MIT e-mail address that will manage key, using certificates)", size=30) }}
-    </li>
     <li>
       {{ forms.textfield('email', label='Contact:', desc="(a secondary contact, such as your team's e-mail address)", size=40) }}
     </li>
@@ -19,7 +17,7 @@
     </li>
     <li>
       <br>
-      <input type="submit" name="submit" value="Generate Key"/>
+      <input type="submit" name="submit" value="Request Key"/>
     </li>
   </ul>
   {% if form_error is defined %}
@@ -28,17 +26,21 @@
 </form>
 </div>
 
-
+<div id="api-keys">
+<h1>Your API Keys</h1>
+<div id="key-table">
 {% import "key_table.html" as kt with context %}
-{% if pending_keys %}
-<h2>Keys Awaiting Approval</h2>
-{{ kt.key_table(pending_keys, True) }}
-{% endif %}
-
-<h2>Existing Keys</h2>
 {% if all_keys %}
-{{ kt.key_table(all_keys) }}
+{{ kt.key_table(all_keys, skip_owner=True, skip_created=True) }}
+{% else %}
+<p>You do not currently have any API keys.</p>
 {% endif %}
+</div>
+</div>
 
+
+
+
+{% include "debug.html" %}
 </body>
 </html>

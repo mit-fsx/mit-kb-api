@@ -4,7 +4,7 @@
 {% include "_page_top.html" %}
 <h1>{{ title }}</h1>
 <div id="setup_form">
-<form class="clearfix" action="{{ url_for('setup') }}" method="POST">
+<form class="clearfix" action="{{ url_for('admin.setup') }}" method="POST">
   <p class="textfield">Enter your setup key to create the database and set {{ remote_user.username }} as an administrative user.</p>
   <ul class="inline">
     <li>

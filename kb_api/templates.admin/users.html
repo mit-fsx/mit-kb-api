@@ -5,7 +5,7 @@
 {% include "_page_top.html" %}
 
 <h1>{{ title }}</h1>
-<form class="clearfix" action="{{ url_for('add_admin_user') }}" method="POST">
+<form class="clearfix" action="{{ url_for('admin.add_admin_user') }}" method="POST">
   <ul class="inline">
     <li>
       {{ forms.textfield('username', label='Username:', desc="", size=30) }}
@@ -28,7 +28,7 @@
 
 
 
-<form class="clearfix" action="{{ url_for('manage_users') }}" method="POST">
+<form class="clearfix" action="{{ url_for('admin.manage_users') }}" method="POST">
 
 <table class="key-table">
 <tr>
