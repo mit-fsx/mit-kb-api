@@ -167,11 +167,19 @@ class KBAPI(Api):
         rv.headers.extend(cors_headers())
         return rv
 
+    # Override flask-restfuls error-router.
+    # We want to catch all 404s, but _only_ in this blueprint
+    # The goal here is not to even pretend to handle errors we don't own
+    # in this blueprint.  However, do need to have catch_all_404s set, because
+    # we need the CORS heeaders in the 404s
+    def error_router(self, original_handler, e):
+        # Our mount point, determined at runtime, is in the blueprint_setup
+        if flask.request.path.startswith(self.blueprint_setup.url_prefix):
+            return super(KBAPI, self).error_router(original_handler, e)
+        return original_handler(e)
+
     def handle_error(self, e):
-        if not flask.request.path.startswith(self.prefix):
-            return flask.make_response(e)
-        request=flask.request
-        print >>sys.stderr, request.path, request.base_url, request.url, request.url_root
+        request = flask.request
         parsed = ParsedException(e)
         rv = parsed.json
         rv['html'] = parsed.html
