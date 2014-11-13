@@ -20,13 +20,8 @@ from .database import db
 
 logger = logging.getLogger('kb_api.admin')
 
-app = flask.Flask(__name__,
-                  template_folder=config.get('Admin', 'templates', 'templates'))
-
-app.config['SQLALCHEMY_DATABASE_URI'] = config.get('Authentication', 'db_uri')
-db.init_app(app)
-
-app.jinja_env.undefined = jinja2.StrictUndefined
+admin_blueprint = flask.Blueprint('admin', __name__,
+                                  template_folder='templates.admin')
 
 def authenticated_route(f=None, require_admin=False, optional=False):
     if f is None:
@@ -59,7 +54,7 @@ def extract_formdata(f=None, required=tuple()):
         return f(*args, **kwargs)
     return auth_decorator
 
-@app.errorhandler(403)
+@admin_blueprint.errorhandler(403)
 def fix_403(exception, **kwargs):
     # Safari's behavior is broken.  When a re-negotiated URL (e.g. for
     # SSLVerifyClient require in a directory context) returns 403,
@@ -72,20 +67,20 @@ def fix_403(exception, **kwargs):
     return exception, code
 
 
-@app.errorhandler(500)
+@admin_blueprint.app_errorhandler(500)
 def ohnoes(exception, **kwargs):
     logger.exception(exception)
     if isinstance(exception, auth.DatabaseError):
         return "Database error: {0}".format(exception)
     return "An internal error occurred: " + str(exception)
 
-@app.template_filter('permlabel')
+@admin_blueprint.app_template_filter('permlabel')
 def _filter_permlabel(value):
     if not isinstance(value, basestring):
         raise ValueError('String required')
     return ' '.join([x[0].upper() + x[1:].lower() for x in value.split('_')])
 
-@app.template_filter('datetime')
+@admin_blueprint.app_template_filter('datetime')
 def _filter_datetime(value, fmt='long'):
     if fmt == 'shortdate':
         return value.strftime("%m/%d/%y")
@@ -101,7 +96,7 @@ def strip_string(s):
         return s
     raise ValueError
 
-@app.route('/', methods=['GET'])
+@admin_blueprint.route('/', methods=['GET'])
 @authenticated_route(optional=True)
 def enroll_user(remote_user=None, formdata={}, **kwargs):
     if not remote_user.authenticated:
@@ -109,9 +104,9 @@ def enroll_user(remote_user=None, formdata={}, **kwargs):
                       email=remote_user.email,
                       real_name=remote_user.real_name,
                       is_admin=False)
-    return flask.redirect(flask.url_for('user_root'))
+    return flask.redirect(flask.url_for('.user_root'))
 
-@app.route('/admin/users', methods=['GET', 'POST'])
+@admin_blueprint.route('/admin/users', methods=['GET', 'POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('users',))
 def manage_users(remote_user=None, formdata={}, **kwargs):
@@ -127,7 +122,7 @@ def manage_users(remote_user=None, formdata={}, **kwargs):
                                  remote_user=remote_user,
                                  users=users)
 
-@app.route('/admin/users/add', methods=['POST'])
+@admin_blueprint.route('/admin/users/add', methods=['POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('username', 'email', 'realname'))
 def add_admin_user(remote_user=None, formdata={}, **kwargs):
@@ -140,9 +135,9 @@ def add_admin_user(remote_user=None, formdata={}, **kwargs):
                       email=formdata['email'],
                       real_name=formdata['realname'],
                       is_admin=True)
-    return flask.redirect(flask.url_for('manage_users'))
+    return flask.redirect(flask.url_for('.manage_users'))
 
-@app.route('/admin', methods=['GET', 'POST'])
+@admin_blueprint.route('/admin', methods=['GET', 'POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('owner', 'email', 'description'))
 def admin_root(remote_user=None, formdata={}, **kwargs):
@@ -167,7 +162,7 @@ def admin_root(remote_user=None, formdata={}, **kwargs):
                                  pending_keys=[k for k in keys if k.status == auth.Statuses.PENDING],
                                  **kwargs)
 
-@app.route('/admin/approve', methods=['POST'])
+@admin_blueprint.route('/admin/approve', methods=['POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('key_id',))
 def approve_key(remote_user=None, formdata={}, **kwargs):
@@ -178,9 +173,9 @@ def approve_key(remote_user=None, formdata={}, **kwargs):
         raise BadRequest('Key not pending.')
     auth.update_db_object(key,
                           {'status': auth.Statuses.ACTIVE})
-    return flask.redirect(flask.url_for('admin_root'))
+    return flask.redirect(flask.url_for('.admin_root'))
 
-@app.route('/admin/edit', methods=['POST'])
+@admin_blueprint.route('/admin/edit', methods=['POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('key_id',))
 def admin_edit_key(remote_user=None, formdata={}, **kwargs):
@@ -220,7 +215,7 @@ def admin_edit_key(remote_user=None, formdata={}, **kwargs):
             tmplargs['form_error'] = e
     return flask.render_template('edit_key.html', **tmplargs);
 
-@app.route('/edit', methods=['POST'])
+@admin_blueprint.route('/edit', methods=['POST'])
 @authenticated_route
 @extract_formdata(required=('key_id',))
 def edit_key(remote_user=None, formdata={}, **kwargs):
@@ -246,13 +241,13 @@ def edit_key(remote_user=None, formdata={}, **kwargs):
         else:
             update_vals['status'] = key.status
         auth.update_db_object(key,
-        return flask.redirect(flask.url_for('user_root'))
                               update_vals,
                               fields=('description', 'email', 'status'))
+        return flask.redirect(flask.url_for('.user_root'))
     return flask.render_template('edit_key.html', **tmplargs);
 
 
-@app.route('/user', methods=['GET', 'POST'])
+@admin_blueprint.route('/user', methods=['GET', 'POST'])
 @authenticated_route
 @extract_formdata(required=('email', 'description'))
 def user_root(remote_user=None, formdata={}, **kwargs):

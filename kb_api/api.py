@@ -16,7 +16,7 @@ from confluence.rpc import Session, RemoteException
 from xml.sax import saxutils
 
 from .config import APIConfig as config
-from .database import db
+#from .database import db
 from . import auth
 
 logger = logging.getLogger('kb_api.server')
@@ -403,10 +403,11 @@ class Article(AuthenticatedResource):
                                  marshal_fields)}
 
 
-app = flask.Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = config.get('Authentication', 'db_uri')
-db.init_app(app)
-api = KBAPI(app, prefix=config.get('API', 'prefix', ''))
+api_blueprint = flask.Blueprint('api', __name__)
+
+# We no longer specify a prefix here, because we'll mount the Blueprint
+# at the prefix we want.
+api = KBAPI(api_blueprint)
 api.add_resource(Base, '/')
 api.add_resource(Test, '/test')
 api.add_resource(ArticleCollection, '/articles')
