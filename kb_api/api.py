@@ -1,11 +1,12 @@
 import flask
 import json
 import logging
-import sys
 import xml.etree.ElementTree as xmletree
 import html5lib
 
-from flask.ext.restful import Api, Resource, reqparse, abort, fields, marshal
+from collections import defaultdict
+
+from flask.ext.restful import Api, Resource, reqparse, fields, marshal
 from werkzeug.exceptions import (HTTPException, Gone, InternalServerError,
                                  NotImplemented, NotFound, MethodNotAllowed,
                                  Forbidden, Unauthorized, NotAcceptable,
@@ -16,14 +17,16 @@ from confluence.rpc import Session, RemoteException
 from xml.sax import saxutils
 
 from .config import APIConfig as config
-#from .database import db
 from . import auth
 
 logger = logging.getLogger('kb_api.server')
 
+#TODO session proxy that only connects when needed
 confluence_session = Session(config.get('Connection', 'host'))
 confluence_session.login(config.get('Connection', 'username'),
                          config.get('Connection', 'password'))
+
+blueprint_name = 'api'
 
 def html_escape(thing):
     if isinstance(thing, dict):
@@ -167,6 +170,14 @@ class KBAPI(Api):
         rv.headers.extend(cors_headers())
         return rv
 
+    def add_resource(self, resource):
+        kwargs = {}
+        if getattr(resource, '_endpoint_name', None) is not None:
+            kwargs['endpoint'] = resource._endpoint_name
+        return super(KBAPI, self).add_resource(resource,
+                                               *resource._urls,
+                                               **kwargs)
+
     # Override flask-restfuls error-router.
     # We want to catch all 404s, but _only_ in this blueprint
     # The goal here is not to even pretend to handle errors we don't own
@@ -226,6 +237,9 @@ class AuthenticatedResource(KBResource):
 
 class Base(KBResource):
     """The root level of the API."""
+
+    _urls = ('/',)
+
     def get(self, **kwargs):
         txt = config.get('API', 'root_text', 'How about a nice game of chess?')
         docs = config.get('API', 'doc_url', 'http://example.com')
@@ -238,8 +252,34 @@ class Base(KBResource):
                 'documentation': docs,
                 'html': html.format(title=html_escape(txt), uri=docs)}
 
+class Docs(KBResource):
+    """Display the API documentation."""
+
+    _urls = ('/docs',)
+
+    def get(self, **kwargs):
+        endpoints = defaultdict(list)
+        for rule in flask.current_app.url_map.iter_rules():
+            if not rule.endpoint.startswith(blueprint_name + '.'):
+                continue
+            endpoints[rule.endpoint].append("{0} ({1})".format(rule.rule,
+                                                               ','.join([x for x in rule.methods if x not in ('HEAD', 'OPTIONS')])))
+        rv = defaultdict(dict)
+        for e in endpoints:
+            doclines = map(str.strip, filter(len, flask.current_app.view_functions.get(e).func_doc.splitlines()))
+            k = ': '.join([e.replace(blueprint_name + '.', '', 1),
+                           doclines[0]])
+            rv[k]['urls'] = endpoints[e]
+            rv[k]['parameters'] = [x[1:] for x in doclines if x.startswith(':')]
+        return {'endpoints': rv }
+
 class Test(AuthenticatedResource):
-    """Test the API."""
+    """
+    Test the API.
+    """
+
+    _urls = ('/test',)
+
     def get(self, **kwargs):
         text = 'Hello, world!'
         return { 'text': text,
@@ -251,7 +291,13 @@ class Test(AuthenticatedResource):
 #                'documentation': docs}
 
 class Shortcode(AuthenticatedResource):
-    """Convert a shortcode to a page id."""
+    """
+    Convert a shortcode to a page id.
+
+    :'code': An article's shortcode
+    """
+    _urls = ('/shortcode/<string:code>',)
+
     def get(self, code, **kwargs):
         rv = {'id': code2id(code)}
         # Don't marshal the dictionary itself because we don't want to
@@ -260,6 +306,17 @@ class Shortcode(AuthenticatedResource):
         return rv
 
 class LabelArticles(AuthenticatedResource):
+    """
+    Obtain a list of articles for a given label.
+
+    :id: A label's numeric id
+    :name: The name of a label
+    """
+
+    _urls = ('/labels/<int:id>/articles',
+             '/labels/<string:name>/articles')
+    _endpoint_name = 'labels'
+
     def get(self, **kwargs):
         user = kwargs.get('_api_user')
         require_access(user)
@@ -272,6 +329,15 @@ class LabelArticles(AuthenticatedResource):
         return {'articles': [marshal(x, {k:v for k,v in Article._fields.items() if k in ('url', 'type', 'id', 'title', 'rest_uri')}) for x in articles]}
 
 class Labels(AuthenticatedResource):
+    """
+    Obtain information about a label.
+
+    :name: The name of a label
+    """
+
+    _urls = ('/labels/<string:name>',)
+    _endpoint_name = 'label'
+
     _fields = {
         'name': fields.String,
         'id': fields.Integer,
@@ -288,6 +354,17 @@ class Labels(AuthenticatedResource):
         return {'labels': [marshal(x, Labels._fields) for x in labels]}
 
 class ArticleLabels(AuthenticatedResource):
+    """
+    Information about labels for an article.
+
+    :id: A article's numeric id
+    :name: The name of a label
+    """
+
+    _urls = ('/articles/<int:id>/labels',
+             '/articles/<int:id>/labels/<string:name>')
+    _endpoint_name = 'article_labels'
+
     def __init__(self, *args, **kwargs):
         super(ArticleLabels, self).__init__(*args, **kwargs)
         self.parser = reqparse.RequestParser()
@@ -341,10 +418,28 @@ class ArticleLabels(AuthenticatedResource):
         return marshal(rv, _fields)
 
 class ArticleCollection(AuthenticatedResource):
+    """
+    A collection of articles.
+    """
+
+    _urls = ('/articles',)
+
     def post(self, **kwargs):
         raise NotImplemented('Not yet implemented')
 
 class Article(AuthenticatedResource):
+    """
+    Information about labels for an article.
+
+    :id: A article's numeric id
+    :format: One of 'div', 'html', or 'object'
+    :name: One of 'all', or 'excerpt'
+    """
+
+    _urls = ('/articles/<int:id>',
+             '/articles/<int:id>/<string:format>',
+             '/articles/<int:id>/<string:format>/<string:part>')
+
     _fields = {
         'content': fields.String,
         'space': fields.String,
@@ -411,29 +506,17 @@ class Article(AuthenticatedResource):
                                  marshal_fields)}
 
 
-api_blueprint = flask.Blueprint('api', __name__)
+api_blueprint = flask.Blueprint(blueprint_name, __name__)
 
 # We no longer specify a prefix here, because we'll mount the Blueprint
 # at the prefix we want.
 api = KBAPI(api_blueprint)
-api.add_resource(Base, '/')
-api.add_resource(Test, '/test')
-api.add_resource(ArticleCollection, '/articles')
-api.add_resource(Article,
-                 '/articles/<int:id>',
-                 '/articles/<int:id>/<string:format>',
-                 '/articles/<int:id>/<string:format>/<string:part>',
-                 endpoint='article')
-api.add_resource(ArticleLabels,
-                 '/articles/<int:id>/labels',
-                 '/articles/<int:id>/labels/<string:name>',
-                 endpoint='article_labels')
-api.add_resource(Labels,
-                 '/labels/<string:name>',
-                 endpoint='label')
-api.add_resource(LabelArticles,
-                 '/labels/<int:id>/articles',
-                 '/labels/<string:name>/articles',
-                 endpoint='labels')
-api.add_resource(Shortcode,
-                 '/shortcode/<string:code>')
+api.add_resource(Base)
+api.add_resource(Docs)
+api.add_resource(Test)
+api.add_resource(ArticleCollection)
+api.add_resource(Article)
+api.add_resource(ArticleLabels)
+api.add_resource(Labels)
+api.add_resource(LabelArticles)
+api.add_resource(Shortcode)
