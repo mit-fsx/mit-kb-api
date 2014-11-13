@@ -1,5 +1,6 @@
 <div class="user-header full-width top-of-page">
-  <span class="user-name">{{ remote_user }}</span>
+  <span class="user-name">{% if remote_user is defined %}{{ remote_user }}{% else
+  %}(not logged in){% endif %}</span>
 </div>
 <div class="branding-header full-width clearfix">
   <a href="http://web.mit.edu">
