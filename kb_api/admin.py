@@ -2,8 +2,6 @@ import errno
 import logging
 import os
 import sys
-import threading
-import traceback
 
 from functools import wraps, partial
 
@@ -21,8 +19,6 @@ from .models import ValidationError
 from .database import db
 
 logger = logging.getLogger('kb_api.admin')
-thread_lock = threading.Lock()
-
 
 app = flask.Flask(__name__,
                   template_folder=config.get('Admin', 'templates', 'templates'))
@@ -104,54 +100,6 @@ def strip_string(s):
     if len(s) > 0:
         return s
     raise ValueError
-
-@app.route('/setup', methods=['GET', 'POST'])
-@extract_formdata(required=('setup_key',))
-def setup(formdata={}, **kwargs):
-    # We do _not_ authenticate this route, because the DB might not exist
-    # so there's nothing to look up.  Create a remote_user object
-    # from X509 data (this will raise an exception if there's no data)
-    # and use that for this request only.
-    remote_user = auth.X509RemoteUser(flask.request.environ,
-                                      no_lookup=True)
-    filename = config.get('Setup', 'key_file')
-    tmplargs = { 'remote_user': remote_user }
-    if flask.request.method != 'POST':
-        # This is mostly just cosmetic.  Any race conditions will be 
-        # caught by the lock below
-        if not os.path.exists(filename):
-            flask.abort(404)
-        return flask.render_template('setup.html', **tmplargs)
-    # Avoid race conditions by acquiring a lock before checking the key
-    # and removing the file.  Fail with a 503 if there's a race condition.
-    # Lock() can't be used in a context-manager in a non-blocking way without
-    # rolling our own, and try/finally works just as well
-    if not thread_lock.acquire(False):
-        flask.abort(503)
-    try:
-        with open(filename, 'r') as f:
-            key = f.read().strip()
-        if key == formdata['setup_key']:
-            auth.create_tables()
-            auth.add_user(username=remote_user.username,
-                          email=remote_user.email,
-                          real_name=remote_user.real_name,
-                          is_admin=True)
-            os.remove(filename)
-            return flask.redirect(flask.url_for('admin_root'))
-        else:
-            tmplargs['form_error'] = "Key incorrect."
-    except IOError as e:
-        logger.exception("Error while reading setup key file: %s", filename)
-        if e.errno == errno.ENOENT:
-            flask.abort(404)
-        # Shouldn't really happen, and is arguably a 500
-        if e.errno == errno.EACCES:
-            flask.abort(403)
-    finally:
-        thread_lock.release()
-    return flask.render_template('setup.html', **tmplargs)
-
 
 @app.route('/', methods=['GET'])
 @authenticated_route(optional=True)
