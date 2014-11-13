@@ -180,6 +180,21 @@ def manage_users(remote_user=None, formdata={}, **kwargs):
                                  remote_user=remote_user,
                                  users=users)
 
+@app.route('/admin/users/add', methods=['POST'])
+@authenticated_route(require_admin=True)
+@extract_formdata(required=('username', 'email', 'realname'))
+def add_admin_user(remote_user=None, formdata={}, **kwargs):
+    # TODO: move this to auth.something; check if we removed our own access
+    user = auth.lookup_user(formdata['username'])
+    if user is not None:
+        auth.update_db_object(user, ('is_admin',), {'is_admin': True})
+    else:
+        auth.add_user(username=formdata['username'],
+                      email=formdata['email'],
+                      real_name=formdata['realname'],
+                      is_admin=True)
+    return flask.redirect(flask.url_for('manage_users'))
+
 @app.route('/admin', methods=['GET', 'POST'])
 @authenticated_route(require_admin=True)
 @extract_formdata(required=('owner', 'email', 'description'))

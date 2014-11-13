@@ -5,6 +5,29 @@
 {% include "_page_top.html" %}
 
 <h1>{{ title }}</h1>
+<form class="clearfix" action="{{ url_for('add_admin_user') }}" method="POST">
+  <ul class="inline">
+    <li>
+      {{ forms.textfield('username', label='Username:', desc="", size=30) }}
+    </li>
+    <li>
+      {{ forms.textfield('email', label='Email:', desc="", size=40) }}
+    </li>
+    <li>
+      {{ forms.textfield('realname', size=60, label='Real Name:', desc='') }}
+    </li>
+    <li>
+      <br>
+      <input type="submit" name="submit" value="Add New Administrator"/>
+    </li>
+  </ul>
+  {% if form_error is defined %}
+  <p class="form_error">Error: {{form_error}}</p>
+  {% endif %}
+</form>
+
+
+
 <form class="clearfix" action="{{ url_for('manage_users') }}" method="POST">
 
 <table class="key-table">
