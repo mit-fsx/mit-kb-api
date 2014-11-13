@@ -256,7 +256,8 @@ def user_root(remote_user=None, formdata={}, **kwargs):
             try:
                 auth.add_key(remote_user.user,
                              email=formdata['email'],
-                             description=formdata['description'])
+                             description=formdata['description'],
+                             auto_approve=True)
                 del tmplargs['formdata']
             except ValidationError as e:
                 tmplargs['field_error'] = e.field
