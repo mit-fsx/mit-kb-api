@@ -17,31 +17,37 @@ def verify_cb(conn, x509, err, depth, ret):
                   err, depth, ret)
     if ret == 1 and err == 0 and depth == 0:
         logging.debug('populating environment with x509 data')
-    for k,v in x509.get_subject().get_components():
-        kname = 'Email' if k == 'emailAddress' else k
-        os.environ['SSL_CLIENT_S_DN_{0}'.format(kname)] = v
+        for k,v in x509.get_subject().get_components():
+            kname = 'Email' if k == 'emailAddress' else k
+            os.environ['SSL_CLIENT_S_DN_{0}'.format(kname)] = v
     return ret
-
-class DebugMiddleware:
-    def __init__(self, application):
-        self.__application = application
-
-    def __call__(self, environ, start_response):
-        environ.update({k:v for k,v in os.environ.iteritems() if k.startswith('SSL_CLIENT_S_DN')})
-        environ['KB_API_CONFIG'] = os.environ['KB_API_CONFIG']
-        return self.__application(environ, start_response)
 
 ssl_ctx = SSL.Context(SSL.TLSv1_METHOD)
 # Required to use optional client verification
 ssl_ctx.set_session_id(str(uuid.uuid4())[:31])
 # The equivalent of verifyclient optional
 # We'd want to add a or with VERIFY_FAIL_IF_NO_PEER_CERT to require
-ssl_ctx.set_verify(SSL.VERIFY_PEER | SSL.VERIFY_CLIENT_ONCE , verify_cb)
+#| SSL.VERIFY_CLIENT_ONCE means ONCE per context, not once per connection
+ssl_ctx.set_verify(SSL.VERIFY_PEER | SSL.VERIFY_CLIENT_ONCE, verify_cb)
 ssl_ctx.use_privatekey_file('/home/jdreed/src/certs/localhost.key')
 ssl_ctx.use_certificate_file('/home/jdreed/src/certs/localhost.crt')
 ssl_ctx.load_verify_locations('/home/jdreed/src/certs/mitCAclient.pem', None)
+
+class DebugMiddleware:
+    def __init__(self, application):
+        self.__application = application
+
+    def __call__(self, environ, start_response):
+        for k in os.environ:
+            if k.startswith('SSL_CLIENT_S_DN'):
+                environ[k] = os.environ[k]
+                os.environ[k] = ''
+        ssl_ctx.set_session_id(str(uuid.uuid4())[:31])
+        environ['KB_API_CONFIG'] = os.environ['KB_API_CONFIG']
+        return self.__application(environ, start_response)
+
 run_simple('localhost', 8080, DebugMiddleware(application),
-           use_reloader=True, ssl_context=ssl_ctx)
+           use_reloader=True, threaded=True, ssl_context=ssl_ctx)
 
 
 
