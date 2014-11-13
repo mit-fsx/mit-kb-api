@@ -8,11 +8,6 @@ from functools import wraps, partial
 import flask
 import jinja2
 
-from werkzeug.exceptions import (HTTPException, Gone, InternalServerError,
-                                 NotImplemented, NotFound, MethodNotAllowed,
-                                 Forbidden, Unauthorized, NotAcceptable,
-                                 BadRequest)
-
 from .config import APIConfig as config
 from . import auth
 from .models import ValidationError
@@ -22,6 +17,15 @@ logger = logging.getLogger('kb_api.admin')
 
 admin_blueprint = flask.Blueprint('admin', __name__,
                                   template_folder='templates.admin')
+
+class InternalError(Exception):
+    pass
+
+class FormDataError(InternalError):
+    pass
+
+class LoginError(InternalError):
+    pass
 
 def authenticated_route(f=None, require_admin=False, optional=False):
     if f is None:
@@ -34,14 +38,16 @@ def authenticated_route(f=None, require_admin=False, optional=False):
         user = auth.X509RemoteUser(flask.request.environ)
         logger.info('user=%s', user)
         if not optional and not user.authenticated:
-            raise Exception("User not found")
+            logger.info("Unauthenticated user.")
+            raise LoginError("This page requires authentication.")
         if require_admin and not user.is_administrator: 
-            logger.debug("returning 403")
-            flask.abort(403)
+            logger.info("User is not administrator.")
+            raise LoginError("You must be an administrator to access this page.")
         kwargs['remote_user'] = user
         return f(*args, **kwargs)
     return auth_decorator
 
+# TODO: Replace this with WTForms or something
 def extract_formdata(f=None, required=tuple()):
     if f is None:
         return partial(extract_formdata, required=required)
@@ -50,29 +56,18 @@ def extract_formdata(f=None, required=tuple()):
         if flask.request.method == 'POST':
             kwargs['formdata'] = flask.request.form
             if not all([x in kwargs['formdata'] for x in required]):
-                raise BadRequest('form data missing')
+                raise FormDataError("Some required form data was missing.")
         return f(*args, **kwargs)
     return auth_decorator
 
-@admin_blueprint.errorhandler(403)
-def fix_403(exception, **kwargs):
-    # Safari's behavior is broken.  When a re-negotiated URL (e.g. for
-    # SSLVerifyClient require in a directory context) returns 403,
-    # Safari interprets that as "You didn't supply the correct cert"
-    # and prompts the user for the cert continuously, never
-    # succeeding.  If there's an identity preference, it fails
-    # immediately with "could not establish secure connect"
-    # So return 200.
-    code = 200 if flask.request.user_agent.browser == "safari" else 403
-    return exception, code
-
-
 @admin_blueprint.app_errorhandler(500)
-def ohnoes(exception, **kwargs):
-    logger.exception(exception)
-    if isinstance(exception, auth.DatabaseError):
-        return "Database error: {0}".format(exception)
-    return "An internal error occurred: " + str(exception)
+def admin_errorhandler(exception, **kwargs):
+    if not isinstance(exception, InternalError):
+        logger.exception(exception)
+    else:
+        # Don't print the traceback if it's an error we deliberately raised.
+        logger.error(str(exception))
+    return flask.render_template('error.html', exception=exception)
 
 @admin_blueprint.app_template_filter('permlabel')
 def _filter_permlabel(value):
@@ -168,9 +163,9 @@ def admin_root(remote_user=None, formdata={}, **kwargs):
 def approve_key(remote_user=None, formdata={}, **kwargs):
     key = auth.lookup_key(formdata['key_id'])
     if key is None:
-        raise BadRequest('Key not found.')
+        raise InternalError("Key with id '{0}' not found while approving".format(formdata['key_id']))
     if key.status != auth.Statuses.PENDING:
-        raise BadRequest('Key not pending.')
+        raise InternalError("Key with id '{0}' not pending".format(formdata['key_id']))
     auth.update_db_object(key,
                           {'status': auth.Statuses.ACTIVE})
     return flask.redirect(flask.url_for('.admin_root'))
@@ -181,7 +176,7 @@ def approve_key(remote_user=None, formdata={}, **kwargs):
 def admin_edit_key(remote_user=None, formdata={}, **kwargs):
     key = auth.lookup_key(formdata['key_id'])
     if key is None:
-        raise BadRequest('Key not found')
+        raise InternalError("Key with id '{0}' not found while editing".format(formdata['key_id']))
     tmplargs = {'remote_user': remote_user}
     tmplargs['key'] = key
     tmplargs['permissions'] = auth.Permissions
@@ -221,7 +216,7 @@ def admin_edit_key(remote_user=None, formdata={}, **kwargs):
 def edit_key(remote_user=None, formdata={}, **kwargs):
     key = auth.lookup_key(formdata['key_id'])
     if key is None:
-        raise BadRequest('Key not found')
+        raise InternalError("Key with id '{0}' not found while editing".format(key_id))
     tmplargs = {'remote_user': remote_user}
     tmplargs['key'] = key
     tmplargs['permissions'] = auth.Permissions
@@ -229,11 +224,9 @@ def edit_key(remote_user=None, formdata={}, **kwargs):
     tmplargs['is_admin'] = False
     tmplargs['deactivatable'] = key.status == auth.Statuses.ACTIVE
     if key.owner != remote_user.user:
-        raise Forbidden('You are not authorized to edit that key.')
-
+        raise InternalError("Not authorized to edit key '{0}'".format(formdata['key_id']))
     if key.status not in (auth.Statuses.ACTIVE, auth.Statuses.INACTIVE):
-        raise Forbidden('Key not editable')
-
+        raise InternalError("That key is not editable.")
     if formdata.get('edit_key_submit', None) is not None:
         update_vals = formdata.to_dict()
         if formdata.get('deactivate', 'no') == 'yes':

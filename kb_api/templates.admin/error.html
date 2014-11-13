@@ -1,0 +1,14 @@
+{% set title='Error' %}
+{% include "_html_header.html" %}
+<body>
+{% include "_page_top.html" %}
+<h1>{{ title }}</h1>
+<div id="setup_form">
+  <p>Sorry, an error ({{ exception.__class__.__name__ }}) occurred.</p>
+  {% if exception %}
+  <p>{{ exception }}</p>
+  {% endif %}
+</div>
+{% include "debug.html" %}
+</body>
+</html>
