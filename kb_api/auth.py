@@ -3,7 +3,7 @@ import operator
 import re
 import uuid
 
-from flask import g
+from flask import g, request
 from sqlalchemy import desc
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
@@ -197,8 +197,21 @@ class RemoteUser(object):
     def strip_domain(email_addr):
         return email_addr.split('@', 1)[0]
 
-class X509RemoteUser(RemoteUser):
+class OIDCRemoteUser(RemoteUser):
     def __init__(self, environ, **kwargs):
+        try:
+            vals = { 'username': environ['SSL_CLIENT_S_DN_Email'].lower(),
+                     'real_name' :environ['SSL_CLIENT_S_DN_CN'],
+                     'email': environ['SSL_CLIENT_S_DN_Email'].lower() }
+            kwargs.update(vals)
+        except KeyError:
+            logger.exception("Bad x509 data")
+            raise AuthenticationError("Unable to parse X.509 certificate data in environment")
+        super(X509RemoteUser, self).__init__(**kwargs)
+
+class X509RemoteUser(RemoteUser):
+    def __init__(self, **kwargs):
+        environ = request.environ
         try:
             vals = { 'username': environ['SSL_CLIENT_S_DN_Email'].lower(),
                      'real_name' :environ['SSL_CLIENT_S_DN_CN'],

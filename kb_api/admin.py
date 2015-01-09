@@ -35,7 +35,7 @@ def authenticated_route(f=None, require_admin=False, optional=False):
         raise TypeError('Cannot mix optional=True and require_admin=True')
     @wraps(f)
     def auth_decorator(*args, **kwargs):
-        user = auth.X509RemoteUser(flask.request.environ)
+        user = auth.X509RemoteUser()#flask.request.environ)
         logger.info('user=%s', user)
         if not optional and not user.authenticated:
             logger.info("Unauthenticated user.")
