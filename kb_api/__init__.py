@@ -17,6 +17,7 @@ _app.register_blueprint(static)
 _app.register_blueprint(admin_blueprint, url_prefix='/keys')
 _app.register_blueprint(api_blueprint, url_prefix='/api/v1')
 _app.config['SQLALCHEMY_DATABASE_URI'] = config.get('Authentication', 'db_uri')
+_app.secret_key = config.get('App', 'secret_key')
 db.init_app(_app)
 _app.jinja_env.undefined = jinja2.StrictUndefined
 
