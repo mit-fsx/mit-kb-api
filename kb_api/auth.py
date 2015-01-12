@@ -3,11 +3,16 @@ import operator
 import re
 import uuid
 
-from flask import g, request
+from flask import g
 from sqlalchemy import desc
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from werkzeug.local import LocalProxy
+
+from oic import oic
+from oic.oic import message
+from oic.utils.authn.client import CLIENT_AUTHN_METHOD
+from oic.oauth2 import rndstr
 
 from . import models
 from .config import APIConfig
@@ -197,31 +202,52 @@ class RemoteUser(object):
     def strip_domain(email_addr):
         return email_addr.split('@', 1)[0]
 
-class OIDCRemoteUser(RemoteUser):
-    def __init__(self, environ, **kwargs):
-        try:
-            vals = { 'username': environ['SSL_CLIENT_S_DN_Email'].lower(),
-                     'real_name' :environ['SSL_CLIENT_S_DN_CN'],
-                     'email': environ['SSL_CLIENT_S_DN_Email'].lower() }
-            kwargs.update(vals)
-        except KeyError:
-            logger.exception("Bad x509 data")
-            raise AuthenticationError("Unable to parse X.509 certificate data in environment")
-        super(X509RemoteUser, self).__init__(**kwargs)
+class OIDC:
+    def __init__(self):
+        self.client_secret = APIConfig.get('OIDC', 'client_secret')
+        self.client_id = APIConfig.get('OIDC', 'client_id')
+        self.redirect_uri = APIConfig.get('OIDC', 'redirect_uri')
+        self.client = oic.Client(client_id=self.client_id,
+                                 client_authn_method=CLIENT_AUTHN_METHOD)
+        # Why the library cannot simply be passed a server URL and
+        # do all the right stuff with it is beyond me
+        pc = self.client.provider_config(APIConfig.get('OIDC', 'provider_uri'))
+        # This is hardcoded in oic.oauth2.message as the empty string,
+        # I have no idea why.
+        self.client.keyjar.load_keys(pc, '')
+        self.scopes_desired = ['openid', 'profile', 'email']
+        
+    def get_login_uri(self, state, nonce):
+        request_args = {'response_type': 'code',
+                        'scope': ' '.join(self.scopes_desired),
+                        'redirect_uri': self.redirect_uri,
+                        'nonce': nonce,
+                        'state': state }
+        # Generate the components of the authorization request
+        uri, body, http_args, areq = self.client.authorization_request_info(request_args=request_args)
+        return uri
 
-class X509RemoteUser(RemoteUser):
-    def __init__(self, **kwargs):
-        environ = request.environ
-        try:
-            vals = { 'username': environ['SSL_CLIENT_S_DN_Email'].lower(),
-                     'real_name' :environ['SSL_CLIENT_S_DN_CN'],
-                     'email': environ['SSL_CLIENT_S_DN_Email'].lower() }
-            kwargs.update(vals)
-        except KeyError:
-            logger.exception("Bad x509 data")
-            raise AuthenticationError("Unable to parse X.509 certificate data in environment")
-        super(X509RemoteUser, self).__init__(**kwargs)
-
+    def process_request(self, reqdata, state, nonce):
+        authresp = self.client.parse_response(message.AuthorizationResponse,
+                                              info=reqdata,
+                                              sformat="dict")
+        assert authresp["state"] == state
+        if 'error' in reqdata:
+            raise AuthenticationError('OIDC error: ' + reqdata['error_description'])
+        if 'code' not in reqdata:
+            raise AuthenticationError('Unexpected response from OIDC server')
+        request_args = { 'client_id' : self.client_id,
+                         'client_secret': self.client_secret,
+                         'code': authresp['code'],
+                         'redirect_uri': self.redirect_uri }
+        token = self.client.do_access_token_request(request_args=request_args,
+                                                    state=authresp['state'],
+                                                    authn_method="client_secret_post")
+        # TODO: if token expired/missing 'scope'
+        if set(token['scope']).intersection(set(self.scopes_desired)) != set(self.scopes_desired):
+            raise AuthenticationError('OIDC error: You denied access to one or more required scopes')
+        userinfo = self.client.do_user_info_request(state=authresp['state'])
+        return userinfo
 
 def _load_statuses():
     statuses = getattr(g, '_auth_statuses', None)

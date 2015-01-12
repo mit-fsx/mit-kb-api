@@ -1,0 +1,9 @@
+{% set title='Login Required' %}
+{% include "_html_header.html" %}
+<body>
+{% include "_page_top.html" %}
+<h1>{{ title }}</h1>
+<p><a href="{{ openid_url }}">Login with OpenID Connect</a></p>
+{% include "debug.html" %}
+</body>
+</html>

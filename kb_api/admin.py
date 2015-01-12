@@ -8,6 +8,8 @@ from functools import wraps, partial
 import flask
 import jinja2
 
+from oic.oauth2 import rndstr
+
 from .config import APIConfig as config
 from . import auth
 from .models import ValidationError
@@ -35,7 +37,10 @@ def authenticated_route(f=None, require_admin=False, optional=False):
         raise TypeError('Cannot mix optional=True and require_admin=True')
     @wraps(f)
     def auth_decorator(*args, **kwargs):
-        user = auth.X509RemoteUser()#flask.request.environ)
+        username = flask.session.get('remote_user', None)
+        if username is None:
+            return flask.redirect(flask.url_for('.login'))
+        user = auth.RemoteUser(username=username)
         logger.info('user=%s', user)
         if not optional and not user.authenticated:
             logger.info("Unauthenticated user.")
@@ -94,12 +99,33 @@ def strip_string(s):
 @admin_blueprint.route('/', methods=['GET'])
 @authenticated_route(optional=True)
 def enroll_user(remote_user=None, formdata={}, **kwargs):
-    if not remote_user.authenticated:
-        auth.add_user(username=remote_user.username,
-                      email=remote_user.email,
-                      real_name=remote_user.real_name,
-                      is_admin=False)
     return flask.redirect(flask.url_for('.user_root'))
+
+@admin_blueprint.route('/login', methods=['GET'])
+def login(remote_user=None, **kwargs):
+    oidc = auth.OIDC()
+    flask.session['remote_user'] = None
+    flask.session['state'] = rndstr()
+    flask.session['nonce'] = rndstr()
+    return flask.render_template('login.html',
+                                 remote_user=remote_user,
+                                 openid_url=oidc.get_login_uri(flask.session['state'], flask.session['nonce']))
+
+@admin_blueprint.route('/openid', methods=['GET', 'POST'])
+def openid_login(**kwargs):
+    oidc = auth.OIDC()
+    userinfo = oidc.process_request(flask.request.args,
+                                    flask.session['state'],
+                                    flask.session['nonce'])
+    remote_user = auth.RemoteUser(username=userinfo['email'])
+    if not remote_user.authenticated:
+        auth.add_user(username=userinfo['email'],
+                      email=userinfo['email'],
+                      real_name=userinfo['name'],
+                      is_admin=False)
+    flask.session['remote_user'] = userinfo['email']
+    return flask.redirect(flask.url_for('.user_root'))
+
 
 @admin_blueprint.route('/admin/users', methods=['GET', 'POST'])
 @authenticated_route(require_admin=True)
