@@ -302,7 +302,7 @@ class Shortcode(AuthenticatedResource):
         rv = {'id': code2id(code)}
         # Don't marshal the dictionary itself because we don't want to
         # clobber the 'id'
-        rv.update(marshal(rv, {'rest_uri': fields.Url('article')}))
+        rv.update(marshal(rv, {'rest_uri': fields.Url('.article')}))
         return rv
 
 class LabelArticles(AuthenticatedResource):
@@ -341,7 +341,7 @@ class Labels(AuthenticatedResource):
     _fields = {
         'name': fields.String,
         'id': fields.Integer,
-        'rest_uri': fields.Url('label')
+        'rest_uri': fields.Url('.label')
         }
 
     def get(self, **kwargs):
@@ -414,7 +414,7 @@ class ArticleLabels(AuthenticatedResource):
               'id': kwargs.get('id'),
               'name': name}
         _fields = {'data': fields.String,
-                   'rest_uri': fields.Url('article_labels')}
+                   'rest_uri': fields.Url('.article_labels')}
         return marshal(rv, _fields)
 
 class ArticleCollection(AuthenticatedResource):
@@ -450,7 +450,7 @@ class Article(AuthenticatedResource):
         'modified': fields.DateTime,
         'short_url': fields.String,
         'id': fields.Integer,
-        'rest_uri': fields.Url('article')
+        'rest_uri': fields.Url('.article')
     }
 
     _valid_formats = ('div', 'html', 'object')
