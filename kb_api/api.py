@@ -38,6 +38,9 @@ def html_escape(thing):
 def require_access(user, op=None, space=None):
     logger.debug("require_access(%s, %s, %s)", user, op, space)
     logger.debug(user.permissions)
+    # Hack until this is refactored
+    if op is None and space is None:
+        return True
     if user.can(op, space):
         return True
     logger.debug("access denied")
