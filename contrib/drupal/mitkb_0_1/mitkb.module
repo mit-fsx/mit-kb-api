@@ -117,27 +117,37 @@ function mitkb_filter_info() {
  */
 
 function _request_kb_htmlcode($articleid, $excerpt) {
+  $kb_api_key = 'YOUR API KEY GOES HERE';
 
   // Create HTTP request URL
   if ($excerpt == 'true') {
-      $url = "http://knowledgebase-api.mit.edu/v1/articles/" . $articleid . "/div/excerpt";
+      $url = "https://knowledgebase-api.mit.edu/api/v1/articles/" . $articleid . "/div/excerpt";
   } else {
-      $url = "http://knowledgebase-api.mit.edu/v1/articles/" . $articleid . "/div";
+      $url = "https://knowledgebase-api.mit.edu/api/v1/articles/" . $articleid . "/div";
   }
 
 
   // Perform the HTTP query against the API
   $curl_handle=curl_init();
+  //  If we need debugging info, we can do this:
+  //  $err = fopen("/path/to/a/log/file", 'w');
+  //  curl_setopt($curl_handle, CURLOPT_STDERR, $err);
+  //  curl_setopt($curl_handle, CURLOPT_VERBOSE, 1);
   curl_setopt($curl_handle, CURLOPT_URL,$url);
   curl_setopt($curl_handle, CURLOPT_CONNECTTIMEOUT, 2);
   curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);
   curl_setopt($curl_handle, CURLOPT_USERAGENT, 'Drupal');
+  // Set an Authorization header and add it.
+  curl_setopt($curl_handle, CURLOPT_HTTPHEADER, array('Authorization: bearer ' . $kb_api_key));
   $query = curl_exec($curl_handle);
   curl_close($curl_handle);
 
   // Convert JSON object to an assoc. array that PHP can interpret
   $decoded = json_decode($query, true);
 
+  if (is_null($decoded)) {
+    return 'Failed to decode JSON data.  Invalid response from server?';
+  }  
   
   // Check to make sure the html attribute exists and is non-null before proceeding 
   
