@@ -41,8 +41,8 @@
  * Leverages the MIT KB API.  Documentation is available at:
  * http://kb.mit.edu/confluence/x/cVAYCQ
  *
- * Note that access to the API is limited to servers with MIT IP addresses, as of the time
- * of writing.
+ * An API key is required.  You are encouraged to read the API documentation in its entirety.
+ * Experience with installing and configuring community-developed Drupal modules is assumed.
  *
  * HOW TO INSTALL:
  * 1) Install this module through Administration > Modules
@@ -50,6 +50,12 @@
  * 2) Enable the module Administration > Modules
  * 3) Enable the filter "MIT-KB" in each text format you want to use, via Configuration >
  *    Text Formats
+ * 4) Follow the "MIT KB module settings" link in the administration menu, or 
+ *    visit YOURSITE/admin/settings/mitkb, and set your API key.
+ *
+ *    Clearing your caches may be required to cause Drupal to render the module's menu
+ *    and settings page.
+ *
  *
  * TEXT FORMAT LIMITATIONS:
  * This will work out-of-the-box on pages with the text formats "Full HTML" and "PHP Code"
@@ -117,6 +123,35 @@ function mitkb_filter_info() {
   return $filters;
 }
 
+function mitkb_menu() {
+  $items = array();
+
+  $items['admin/settings/mitkb'] = array(
+    'title' => 'MIT KB module settings',
+    'description' => 'Settings for the MIT KB module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('mitkb_admin_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+   );
+
+  return $items;
+}
+
+function mitkb_admin_form($form, &$form_state) {
+  $form = array();
+  $form['mitkb_apikey'] = array(
+				'#type' => 'textfield',
+				'#title' => t('API Key'),
+				'#default_value' => variable_get('mitkb_apikey', ''),
+				'#size' => 32,
+				'#maxlength' => 50,
+				'#description' => t("An API key is required; see the API documentation for more info."),
+				'#required' => TRUE,
+				);
+  return system_settings_form($form);
+}
+
 
 
 /**
@@ -124,7 +159,10 @@ function mitkb_filter_info() {
  */
 
 function _request_kb_htmlcode($articleid, $excerpt) {
-  $kb_api_key = 'YOUR API KEY GOES HERE';
+  $kb_api_key = variable_get('mitkb_apikey', '');
+  if (empty($kb_api_key)) {
+    return "(<strong>Cannot Render KB Content:</strong> The MIT KB shortcodes cannot be used until you specify an API key in the settings page)";
+  }
 
   // Create HTTP request URL
   if ($excerpt == 'true') {

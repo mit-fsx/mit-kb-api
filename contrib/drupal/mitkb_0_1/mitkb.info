@@ -4,3 +4,4 @@ package = "MIT Modules"
 dependencies[] = filter
 core = 7.x
 version = 0.1
+configure = admin/settings/mitkb
