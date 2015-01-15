@@ -1,4 +1,11 @@
 <?php
+/**
+ * This is a sample proof-of-concept module, designed to illustrate
+ * one of many possible ways to integrate the KB API with a Drupal site.
+ * Every effort is made to keep this file up to date, but in the event
+ * of a conflict between this file and the API documentation, the latter
+ * should be considered canonical.
+ */
 
 /**
  * MIT KB DRUPAL MODULE  (proof of concept)
